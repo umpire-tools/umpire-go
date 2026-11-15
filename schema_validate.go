@@ -142,6 +142,38 @@ func assertStringArray(v any, context string) error {
 	return nil
 }
 
+// assertMembershipField cross-checks a membership op against its field's
+// declared emptiness. Membership is defined over scalars for in/notIn/
+// fieldInCond and over arrays for contains, so a contradicting field
+// definition is a schema error rather than a predicate that can never hold.
+// Undeclared fields are reported by the rule walk that owns field-existence
+// checks; this reports only the definition mismatch.
+func assertMembershipField(op, field string, fields map[string]FieldDef) error {
+	def, declared := fields[field]
+	if !declared {
+		return nil
+	}
+	switch op {
+	case "in", "notIn", "fieldInCond":
+		if def.IsEmpty != EmptyArray {
+			return nil
+		}
+		return schemaErr(
+			"[@umpire/json] Expression %q requires a scalar field, but field %q is declared \"isEmpty\": \"array\"",
+			op, field,
+		)
+	case "contains":
+		switch def.IsEmpty {
+		case EmptyString, EmptyNumber, EmptyBoolean, EmptyObject:
+			return schemaErr(
+				"[@umpire/json] Expression %q requires an array field, but field %q is declared \"isEmpty\": %q",
+				op, field, string(def.IsEmpty),
+			)
+		}
+	}
+	return nil
+}
+
 var conditionTypes = map[string]bool{
 	"boolean": true, "string": true, "number": true,
 	"string[]": true, "number[]": true,
@@ -298,8 +330,8 @@ func assertValidValidatorSpec(spec *object) error {
 	}
 }
 
-func validateValidator(field string, validator any, fieldNames map[string]bool) error {
-	if !fieldNames[field] {
+func validateValidator(field string, validator any, fields map[string]FieldDef) error {
+	if _, ok := fields[field]; !ok {
 		return schemaErr(
 			"[@umpire/json] Validator references unknown field %q (validator)", field,
 		)
@@ -371,7 +403,7 @@ func validateExcludedRule(rule any) error {
 	return nil
 }
 
-func validateExpression(raw any) error {
+func validateExpression(raw any, fields map[string]FieldDef) error {
 	o, ok := asObject(raw)
 	if !ok {
 		return schemaErr("[@umpire/json] Expression must be an object")
@@ -407,7 +439,24 @@ func validateExpression(raw any) error {
 		if err := assertString(o.val("field"), fmt.Sprintf("Expression %q field", op)); err != nil {
 			return err
 		}
-		return assertPrimitiveArray(o.val("values"), fmt.Sprintf("Expression %q values", op))
+		if err := assertPrimitiveArray(o.val("values"), fmt.Sprintf("Expression %q values", op)); err != nil {
+			return err
+		}
+		return assertMembershipField(op, o.str("field"), fields)
+	case "contains":
+		if err := assertKnownMembers(o, []string{"op", "field", "value"}, "Expression"); err != nil {
+			return err
+		}
+		if err := assertString(o.val("field"), `Expression "contains" field`); err != nil {
+			return err
+		}
+		if _, exists := o.get("value"); !exists {
+			return schemaErr(`[@umpire/json] Expression "contains" requires a value`)
+		}
+		if err := assertPrimitive(o.val("value"), `Expression "contains" value`); err != nil {
+			return err
+		}
+		return assertMembershipField(op, o.str("field"), fields)
 	case "cond":
 		if err := assertKnownMembers(o, []string{"op", "condition"}, "Expression"); err != nil {
 			return err
@@ -436,7 +485,10 @@ func validateExpression(raw any) error {
 		if err := assertString(o.val("field"), `Expression "fieldInCond" field`); err != nil {
 			return err
 		}
-		return assertString(o.val("condition"), `Expression "fieldInCond" condition`)
+		if err := assertString(o.val("condition"), `Expression "fieldInCond" condition`); err != nil {
+			return err
+		}
+		return assertMembershipField(op, o.str("field"), fields)
 	case "and", "or":
 		if err := assertKnownMembers(o, []string{"op", "exprs"}, "Expression"); err != nil {
 			return err
@@ -448,7 +500,7 @@ func validateExpression(raw any) error {
 			)
 		}
 		for _, entry := range exprs {
-			if err := validateExpression(entry); err != nil {
+			if err := validateExpression(entry, fields); err != nil {
 				return err
 			}
 		}
@@ -457,7 +509,7 @@ func validateExpression(raw any) error {
 		if err := assertKnownMembers(o, []string{"op", "expr"}, "Expression"); err != nil {
 			return err
 		}
-		return validateExpression(o.val("expr"))
+		return validateExpression(o.val("expr"), fields)
 	case "check":
 		if err := assertKnownMembers(o, []string{"op", "field", "check"}, "Expression"); err != nil {
 			return err

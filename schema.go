@@ -18,24 +18,11 @@ func hydrateSchema(root *object) (*Schema, error) {
 		}
 	}
 
-	fieldNames := map[string]bool{}
 	var fieldOrder []string
 	fields := map[string]FieldDef{}
 	for _, name := range fieldsObj.Keys() {
-		fieldNames[name] = true
 		fieldOrder = append(fieldOrder, name)
-		defObj := objOrEmpty(fieldsObj.val(name))
-		def := FieldDef{IsEmpty: EmptyPresent}
-		if required := asBool(defObj.val("required")); required {
-			def.Required = required
-		}
-		if defaultValue, exists := defObj.get("default"); exists {
-			def.Default = defaultValue
-		}
-		if strategy := asString(defObj.val("isEmpty")); strategy != "" {
-			def.IsEmpty = IsEmptyStrategy(strategy)
-		}
-		fields[name] = def
+		fields[name] = fieldDefFromObject(objOrEmpty(fieldsObj.val(name)))
 	}
 
 	var warnings []string
@@ -57,7 +44,7 @@ func hydrateSchema(root *object) (*Schema, error) {
 		rulesList, _ := rawRules.([]any)
 		for _, rawRule := range rulesList {
 			ruleObj := objOrEmpty(rawRule)
-			rule, err := buildRule(ruleObj, fieldNames, conditions)
+			rule, err := buildRule(ruleObj, fields, conditions)
 			if err != nil {
 				return nil, err
 			}
@@ -94,7 +81,20 @@ func hydrateSchema(root *object) (*Schema, error) {
 	}, nil
 }
 
-func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[string]ConditionDef) (*Rule, error) {
+// fieldDefFromObject hydrates one field definition object. Field definitions
+// are shape-checked before hydration, so unvalidated input never reaches it.
+func fieldDefFromObject(defObj *object) FieldDef {
+	def := FieldDef{IsEmpty: EmptyPresent, Required: asBool(defObj.val("required"))}
+	if defaultValue, exists := defObj.get("default"); exists {
+		def.Default = defaultValue
+	}
+	if strategy := asString(defObj.val("isEmpty")); strategy != "" {
+		def.IsEmpty = IsEmptyStrategy(strategy)
+	}
+	return def
+}
+
+func buildRule(ruleObj *object, fields map[string]FieldDef, conditions map[string]ConditionDef) (*Rule, error) {
 	ruleType, _ := ruleObj.string("type")
 	reasonValue, hasReason := ruleObj.get("reason")
 	reason, _ := reasonValue.(string)
@@ -115,7 +115,7 @@ func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[strin
 					parsed = append(parsed, dep{field: depName})
 					continue
 				}
-				expr, err := compileExpr(d, fieldNames, conditions)
+				expr, err := compileExpr(d, fields, conditions)
 				if err != nil {
 					return nil, err
 				}
@@ -131,7 +131,7 @@ func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[strin
 				reason:     reason,
 			}, nil
 		}
-		expr, err := compileExpr(ruleObj.val("when"), fieldNames, conditions)
+		expr, err := compileExpr(ruleObj.val("when"), fields, conditions)
 		if err != nil {
 			return nil, err
 		}
@@ -147,7 +147,7 @@ func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[strin
 
 	case "enabledWhen":
 		field, _ := ruleObj.string("field")
-		expr, err := compileExpr(ruleObj.val("when"), fieldNames, conditions)
+		expr, err := compileExpr(ruleObj.val("when"), fields, conditions)
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +162,7 @@ func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[strin
 
 	case "fairWhen":
 		field, _ := ruleObj.string("field")
-		expr, err := compileExpr(ruleObj.val("when"), fieldNames, conditions)
+		expr, err := compileExpr(ruleObj.val("when"), fields, conditions)
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +189,7 @@ func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[strin
 			source, _ := ruleObj.string("source")
 			return DisablesField(source, targets, reason), nil
 		}
-		expr, err := compileExpr(ruleObj.val("when"), fieldNames, conditions)
+		expr, err := compileExpr(ruleObj.val("when"), fields, conditions)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +224,7 @@ func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[strin
 		var inner []*Rule
 		for _, raw := range rulesList {
 			innerObj := objOrEmpty(raw)
-			innerRule, err := buildRule(innerObj, fieldNames, conditions)
+			innerRule, err := buildRule(innerObj, fields, conditions)
 			if err != nil {
 				return nil, err
 			}
@@ -242,7 +242,7 @@ func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[strin
 			var branchRules []*Rule
 			for _, raw := range rawRules {
 				innerObj := objOrEmpty(raw)
-				innerRule, err := buildRule(innerObj, fieldNames, conditions)
+				innerRule, err := buildRule(innerObj, fields, conditions)
 				if err != nil {
 					return nil, err
 				}

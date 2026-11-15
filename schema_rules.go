@@ -4,8 +4,8 @@ import "fmt"
 
 const ruleMembersContext = "Rule"
 
-func assertRuleField(field string, fieldNames map[string]bool, context string) error {
-	if !fieldNames[field] {
+func assertRuleField(field string, fields map[string]FieldDef, context string) error {
+	if _, ok := fields[field]; !ok {
 		return schemaErr(
 			"[@umpire/json] Rule %s references unknown field %q", context, field,
 		)
@@ -246,7 +246,7 @@ func validateRuleMembers(rule *object) error {
 	}
 }
 
-func validateRuleShape(rule *object) error {
+func validateRuleShape(rule *object, fields map[string]FieldDef) error {
 	if err := validateRuleMembers(rule); err != nil {
 		return err
 	}
@@ -276,20 +276,20 @@ func validateRuleShape(rule *object) error {
 				if _, isString := d.(string); isString {
 					continue
 				}
-				if err := validateExpression(d); err != nil {
+				if err := validateExpression(d, fields); err != nil {
 					return err
 				}
 			}
 			return nil
 		}
-		return validateExpression(rule.val("when"))
+		return validateExpression(rule.val("when"), fields)
 	case "enabledWhen", "fairWhen":
 		if err := assertString(
 			rule.val("field"), fmt.Sprintf("Rule %q field", ruleType),
 		); err != nil {
 			return err
 		}
-		return validateExpression(rule.val("when"))
+		return validateExpression(rule.val("when"), fields)
 	case "disables":
 		if err := assertStringArray(rule.val("targets"), `Rule "disables" targets`); err != nil {
 			return err
@@ -297,7 +297,7 @@ func validateRuleShape(rule *object) error {
 		if rule.has("source") {
 			return assertString(rule.val("source"), `Rule "disables" source`)
 		}
-		return validateExpression(rule.val("when"))
+		return validateExpression(rule.val("when"), fields)
 	case "oneOf":
 		if err := assertString(rule.val("group"), `Rule "oneOf" group`); err != nil {
 			return err
@@ -352,12 +352,12 @@ func validateRuleShape(rule *object) error {
 
 // validateRule performs shape plus semantic validation for one rule,
 // recursing into composites. Mirrors the TS core's validateRule.
-func validateRule(raw any, fieldNames map[string]bool, conditions map[string]ConditionDef) error {
+func validateRule(raw any, fields map[string]FieldDef, conditions map[string]ConditionDef) error {
 	rule, ok := asObject(raw)
 	if !ok {
 		return schemaErr("[@umpire/json] Rule must be an object")
 	}
-	if err := validateRuleShape(rule); err != nil {
+	if err := validateRuleShape(rule, fields); err != nil {
 		return err
 	}
 
@@ -365,12 +365,12 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 	switch ruleType {
 	case "requires":
 		field, _ := rule.string("field")
-		if err := assertRuleField(field, fieldNames, `"requires"`); err != nil {
+		if err := assertRuleField(field, fields, `"requires"`); err != nil {
 			return err
 		}
 		if rule.has("dependency") {
 			dependency, _ := rule.string("dependency")
-			return assertRuleField(dependency, fieldNames, `"requires"`)
+			return assertRuleField(dependency, fields, `"requires"`)
 		}
 		if rule.has("dependencies") {
 			deps, _ := rule.val("dependencies").([]any)
@@ -381,47 +381,47 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 			}
 			for _, d := range deps {
 				if depName, isString := d.(string); isString {
-					if err := assertRuleField(depName, fieldNames, `"requires"`); err != nil {
+					if err := assertRuleField(depName, fields, `"requires"`); err != nil {
 						return err
 					}
 					continue
 				}
-				if _, err := compileExpr(d, fieldNames, conditions); err != nil {
+				if _, err := compileExpr(d, fields, conditions); err != nil {
 					return err
 				}
 			}
 			return nil
 		}
-		_, err := compileExpr(rule.val("when"), fieldNames, conditions)
+		_, err := compileExpr(rule.val("when"), fields, conditions)
 		return err
 	case "enabledWhen":
 		field, _ := rule.string("field")
-		if err := assertRuleField(field, fieldNames, `"enabledWhen"`); err != nil {
+		if err := assertRuleField(field, fields, `"enabledWhen"`); err != nil {
 			return err
 		}
-		_, err := compileExpr(rule.val("when"), fieldNames, conditions)
+		_, err := compileExpr(rule.val("when"), fields, conditions)
 		return err
 	case "disables":
 		rawTargets, _ := rule.get("targets")
 		targets, _ := rawTargets.([]any)
 		for _, t := range targets {
-			if err := assertRuleField(t.(string), fieldNames, `"disables"`); err != nil {
+			if err := assertRuleField(t.(string), fields, `"disables"`); err != nil {
 				return err
 			}
 		}
 		if rule.has("source") {
 			source, _ := rule.string("source")
-			return assertRuleField(source, fieldNames, `"disables"`)
+			return assertRuleField(source, fields, `"disables"`)
 		}
-		_, err := compileExpr(rule.val("when"), fieldNames, conditions)
+		_, err := compileExpr(rule.val("when"), fields, conditions)
 		return err
 	case "oneOf":
 		rawBranches, _ := rule.get("branches")
 		branches, _ := asObject(rawBranches)
 		for _, branchName := range branches.Keys() {
-			fields, _ := branches.val(branchName).([]any)
-			for _, f := range fields {
-				if err := assertRuleField(f.(string), fieldNames, `"oneOf"`); err != nil {
+			branchFields, _ := branches.val(branchName).([]any)
+			for _, f := range branchFields {
+				if err := assertRuleField(f.(string), fields, `"oneOf"`); err != nil {
 					return err
 				}
 			}
@@ -429,10 +429,10 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 		return nil
 	case "fairWhen":
 		field, _ := rule.string("field")
-		if err := assertRuleField(field, fieldNames, `"fairWhen"`); err != nil {
+		if err := assertRuleField(field, fields, `"fairWhen"`); err != nil {
 			return err
 		}
-		_, err := compileExpr(rule.val("when"), fieldNames, conditions)
+		_, err := compileExpr(rule.val("when"), fields, conditions)
 		return err
 	case "eitherOf":
 		rawBranches, _ := rule.get("branches")
@@ -440,7 +440,7 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 		for _, branchName := range branches.Keys() {
 			branchRules, _ := branches.val(branchName).([]any)
 			for _, inner := range branchRules {
-				if err := validateRule(inner, fieldNames, conditions); err != nil {
+				if err := validateRule(inner, fields, conditions); err != nil {
 					return err
 				}
 			}
@@ -451,7 +451,7 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 		rawRules, _ := rule.get("rules")
 		rules, _ := rawRules.([]any)
 		for _, inner := range rules {
-			if err := validateRule(inner, fieldNames, conditions); err != nil {
+			if err := validateRule(inner, fields, conditions); err != nil {
 				return err
 			}
 		}
@@ -459,7 +459,7 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 		return err
 	case "check":
 		field, _ := rule.string("field")
-		return assertRuleField(field, fieldNames, `"check"`)
+		return assertRuleField(field, fields, `"check"`)
 	default:
 		return schemaErr(
 			"[@umpire/json] Unknown rule type %q", rule.val("type"),
@@ -545,21 +545,18 @@ func validateSchemaObject(root *object) error {
 		}
 	}
 
-	fieldNames := map[string]bool{}
-	for _, name := range fieldsObj.Keys() {
-		fieldNames[name] = true
-	}
-
+	fields := map[string]FieldDef{}
 	for _, name := range fieldsObj.Keys() {
 		if err := validateFieldDef(name, fieldsObj.val(name)); err != nil {
 			return err
 		}
+		fields[name] = fieldDefFromObject(objOrEmpty(fieldsObj.val(name)))
 	}
 
 	if rawRules, exists := root.get("rules"); exists {
 		rules, _ := rawRules.([]any)
 		for _, rule := range rules {
-			if err := validateRule(rule, fieldNames, conditions); err != nil {
+			if err := validateRule(rule, fields, conditions); err != nil {
 				return err
 			}
 		}
@@ -568,7 +565,7 @@ func validateSchemaObject(root *object) error {
 	if rawValidators, exists := root.get("validators"); exists {
 		validatorsObj, _ := asObject(rawValidators)
 		for _, field := range validatorsObj.Keys() {
-			if err := validateValidator(field, validatorsObj.val(field), fieldNames); err != nil {
+			if err := validateValidator(field, validatorsObj.val(field), fields); err != nil {
 				return err
 			}
 		}
