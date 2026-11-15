@@ -27,14 +27,9 @@ func New(fields []FieldEntry, rules []*Rule, validators map[string]ValidatorEntr
 		fieldOrder = append(fieldOrder, entry.Name)
 	}
 
-	fieldNames := map[string]bool{}
-	for _, name := range fieldOrder {
-		fieldNames[name] = true
-	}
-
 	for _, rule := range rules {
 		for _, target := range rule.targets {
-			if !fieldNames[target] {
+			if _, ok := fieldMap[target]; !ok {
 				return nil, fmt.Errorf(
 					"[@umpire/core] Unknown field %q referenced by %s rule", target, rule.kind,
 				)
@@ -42,7 +37,7 @@ func New(fields []FieldEntry, rules []*Rule, validators map[string]ValidatorEntr
 		}
 		ordering, _ := rule.graphSources()
 		for _, source := range ordering {
-			if !fieldNames[source] {
+			if _, ok := fieldMap[source]; !ok {
 				return nil, fmt.Errorf(
 					"[@umpire/core] Unknown field %q referenced by %s rule", source, rule.kind,
 				)
@@ -50,7 +45,7 @@ func New(fields []FieldEntry, rules []*Rule, validators map[string]ValidatorEntr
 		}
 	}
 	for field := range validators {
-		if !fieldNames[field] {
+		if _, ok := fieldMap[field]; !ok {
 			return nil, fmt.Errorf(
 				"[@umpire/core] Unknown field %q referenced by validators", field,
 			)

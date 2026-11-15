@@ -14,8 +14,8 @@ func (c *compiledExpr) eval(values, conditions map[string]any) (bool, error) {
 	return c.pred(values, conditions)
 }
 
-func assertExprField(field, op string, fieldNames map[string]bool) error {
-	if !fieldNames[field] {
+func assertExprField(field, op string, fields map[string]FieldDef) error {
+	if _, ok := fields[field]; !ok {
 		return fmt.Errorf(
 			"[@umpire/dsl] Unknown field %q in %q expression", field, op,
 		)
@@ -35,14 +35,14 @@ func getConditionValue(condition string, conditions map[string]any) (any, error)
 
 // compileExpr compiles a JSON expression into a predicate, mirroring
 // @umpire/dsl's compileExpr plus @umpire/json's check expressions.
-func compileExpr(raw any, fieldNames map[string]bool, conditions map[string]ConditionDef) (*compiledExpr, error) {
+func compileExpr(raw any, fields map[string]FieldDef, conditions map[string]ConditionDef) (*compiledExpr, error) {
 	obj, ok := asObject(raw)
 	if !ok {
 		return nil, fmt.Errorf("[@umpire/dsl] Expression must be an object")
 	}
 	op, _ := obj.string("op")
 
-	fieldPredicate, err := compileFieldPredicate(obj, op, fieldNames)
+	fieldPredicate, err := compileFieldPredicate(obj, op, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func compileExpr(raw any, fieldNames map[string]bool, conditions map[string]Cond
 	switch op {
 	case "fieldInCond":
 		field, _ := obj.string("field")
-		if err := assertExprField(field, op, fieldNames); err != nil {
+		if err := assertExprField(field, op, fields); err != nil {
 			return nil, err
 		}
 		condition, _ := obj.string("condition")
@@ -106,7 +106,7 @@ func compileExpr(raw any, fieldNames map[string]bool, conditions map[string]Cond
 		compiled := make([]*compiledExpr, 0, len(exprs))
 		refs := map[string]bool{}
 		for _, entry := range exprs {
-			c, err := compileExpr(entry, fieldNames, conditions)
+			c, err := compileExpr(entry, fields, conditions)
 			if err != nil {
 				return nil, err
 			}
@@ -141,7 +141,7 @@ func compileExpr(raw any, fieldNames map[string]bool, conditions map[string]Cond
 				"[@umpire/dsl] \"not\" expression requires an expr field",
 			)
 		}
-		inner, err := compileExpr(rawInner, fieldNames, conditions)
+		inner, err := compileExpr(rawInner, fields, conditions)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +158,7 @@ func compileExpr(raw any, fieldNames map[string]bool, conditions map[string]Cond
 
 	case "check":
 		field, _ := obj.string("field")
-		if err := assertExprField(field, op, fieldNames); err != nil {
+		if err := assertExprField(field, op, fields); err != nil {
 			return nil, err
 		}
 		checkObj := objOrEmpty(obj.val("check"))
@@ -186,11 +186,11 @@ func compileExpr(raw any, fieldNames map[string]bool, conditions map[string]Cond
 
 // compileFieldPredicate handles the field-bound ops; returns nil when the op
 // is not field-bound.
-func compileFieldPredicate(obj *object, op string, fieldNames map[string]bool) (*compiledExpr, error) {
+func compileFieldPredicate(obj *object, op string, fields map[string]FieldDef) (*compiledExpr, error) {
 	switch op {
 	case "eq", "neq":
 		field, _ := obj.string("field")
-		if err := assertExprField(field, op, fieldNames); err != nil {
+		if err := assertExprField(field, op, fields); err != nil {
 			return nil, err
 		}
 		value, _ := obj.get("value")
@@ -206,7 +206,7 @@ func compileFieldPredicate(obj *object, op string, fieldNames map[string]bool) (
 		}, nil
 	case "gt", "gte", "lt", "lte":
 		field, _ := obj.string("field")
-		if err := assertExprField(field, op, fieldNames); err != nil {
+		if err := assertExprField(field, op, fields); err != nil {
 			return nil, err
 		}
 		value, _ := obj.get("value")
@@ -231,16 +231,16 @@ func compileFieldPredicate(obj *object, op string, fieldNames map[string]bool) (
 			checkField: field,
 		}, nil
 	case "present":
-		return fieldTest(obj, op, fieldNames, func(v any) bool { return v != nil })
+		return fieldTest(obj, op, fields, func(v any) bool { return v != nil })
 	case "absent":
-		return fieldTest(obj, op, fieldNames, func(v any) bool { return v == nil })
+		return fieldTest(obj, op, fields, func(v any) bool { return v == nil })
 	case "truthy":
-		return fieldTest(obj, op, fieldNames, isTruthy)
+		return fieldTest(obj, op, fields, isTruthy)
 	case "falsy":
-		return fieldTest(obj, op, fieldNames, func(v any) bool { return !isTruthy(v) })
+		return fieldTest(obj, op, fields, func(v any) bool { return !isTruthy(v) })
 	case "in", "notIn":
 		field, _ := obj.string("field")
-		if err := assertExprField(field, op, fieldNames); err != nil {
+		if err := assertExprField(field, op, fields); err != nil {
 			return nil, err
 		}
 		rawValues, _ := obj.get("values")
@@ -262,7 +262,7 @@ func compileFieldPredicate(obj *object, op string, fieldNames map[string]bool) (
 		}, nil
 	case "contains":
 		field, _ := obj.string("field")
-		if err := assertExprField(field, op, fieldNames); err != nil {
+		if err := assertExprField(field, op, fields); err != nil {
 			return nil, err
 		}
 		value, _ := obj.get("value")
@@ -281,9 +281,9 @@ func compileFieldPredicate(obj *object, op string, fieldNames map[string]bool) (
 	}
 }
 
-func fieldTest(obj *object, op string, fieldNames map[string]bool, test func(any) bool) (*compiledExpr, error) {
+func fieldTest(obj *object, op string, fields map[string]FieldDef, test func(any) bool) (*compiledExpr, error) {
 	field, _ := obj.string("field")
-	if err := assertExprField(field, op, fieldNames); err != nil {
+	if err := assertExprField(field, op, fields); err != nil {
 		return nil, err
 	}
 	return &compiledExpr{

@@ -330,8 +330,8 @@ func assertValidValidatorSpec(spec *object) error {
 	}
 }
 
-func validateValidator(field string, validator any, fieldNames map[string]bool) error {
-	if !fieldNames[field] {
+func validateValidator(field string, validator any, fields map[string]FieldDef) error {
+	if _, ok := fields[field]; !ok {
 		return schemaErr(
 			"[@umpire/json] Validator references unknown field %q (validator)", field,
 		)
