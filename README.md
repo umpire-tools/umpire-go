@@ -113,6 +113,10 @@ Semantic notes:
   those as errors.
 - Schema validation is closed-member: unexpected keys fail at parse time with
   the same messages as `@umpire/json`.
+- `Check` expects JSON-decoded values: arrays as `[]any`, numbers as
+  `float64`, objects as `map[string]any`. Go-typed values such as `[]string`
+  or `int` are not converted, so `contains`, `isEmpty: "array"`, and the
+  numeric comparisons treat them as non-matching.
 
 ## Conformance
 
