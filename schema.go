@@ -24,18 +24,7 @@ func hydrateSchema(root *object) (*Schema, error) {
 	for _, name := range fieldsObj.Keys() {
 		fieldNames[name] = true
 		fieldOrder = append(fieldOrder, name)
-		defObj := objOrEmpty(fieldsObj.val(name))
-		def := FieldDef{IsEmpty: EmptyPresent}
-		if required := asBool(defObj.val("required")); required {
-			def.Required = required
-		}
-		if defaultValue, exists := defObj.get("default"); exists {
-			def.Default = defaultValue
-		}
-		if strategy := asString(defObj.val("isEmpty")); strategy != "" {
-			def.IsEmpty = IsEmptyStrategy(strategy)
-		}
-		fields[name] = def
+		fields[name] = fieldDefFromObject(objOrEmpty(fieldsObj.val(name)))
 	}
 
 	var warnings []string
@@ -92,6 +81,19 @@ func hydrateSchema(root *object) (*Schema, error) {
 		Excluded:   excluded,
 		Warnings:   warnings,
 	}, nil
+}
+
+// fieldDefFromObject hydrates one field definition object. Field definitions
+// are shape-checked before hydration, so unvalidated input never reaches it.
+func fieldDefFromObject(defObj *object) FieldDef {
+	def := FieldDef{IsEmpty: EmptyPresent, Required: asBool(defObj.val("required"))}
+	if defaultValue, exists := defObj.get("default"); exists {
+		def.Default = defaultValue
+	}
+	if strategy := asString(defObj.val("isEmpty")); strategy != "" {
+		def.IsEmpty = IsEmptyStrategy(strategy)
+	}
+	return def
 }
 
 func buildRule(ruleObj *object, fieldNames map[string]bool, conditions map[string]ConditionDef) (*Rule, error) {

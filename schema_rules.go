@@ -246,7 +246,7 @@ func validateRuleMembers(rule *object) error {
 	}
 }
 
-func validateRuleShape(rule *object) error {
+func validateRuleShape(rule *object, fields map[string]FieldDef) error {
 	if err := validateRuleMembers(rule); err != nil {
 		return err
 	}
@@ -276,20 +276,20 @@ func validateRuleShape(rule *object) error {
 				if _, isString := d.(string); isString {
 					continue
 				}
-				if err := validateExpression(d); err != nil {
+				if err := validateExpression(d, fields); err != nil {
 					return err
 				}
 			}
 			return nil
 		}
-		return validateExpression(rule.val("when"))
+		return validateExpression(rule.val("when"), fields)
 	case "enabledWhen", "fairWhen":
 		if err := assertString(
 			rule.val("field"), fmt.Sprintf("Rule %q field", ruleType),
 		); err != nil {
 			return err
 		}
-		return validateExpression(rule.val("when"))
+		return validateExpression(rule.val("when"), fields)
 	case "disables":
 		if err := assertStringArray(rule.val("targets"), `Rule "disables" targets`); err != nil {
 			return err
@@ -297,7 +297,7 @@ func validateRuleShape(rule *object) error {
 		if rule.has("source") {
 			return assertString(rule.val("source"), `Rule "disables" source`)
 		}
-		return validateExpression(rule.val("when"))
+		return validateExpression(rule.val("when"), fields)
 	case "oneOf":
 		if err := assertString(rule.val("group"), `Rule "oneOf" group`); err != nil {
 			return err
@@ -352,12 +352,12 @@ func validateRuleShape(rule *object) error {
 
 // validateRule performs shape plus semantic validation for one rule,
 // recursing into composites. Mirrors the TS core's validateRule.
-func validateRule(raw any, fieldNames map[string]bool, conditions map[string]ConditionDef) error {
+func validateRule(raw any, fieldNames map[string]bool, fields map[string]FieldDef, conditions map[string]ConditionDef) error {
 	rule, ok := asObject(raw)
 	if !ok {
 		return schemaErr("[@umpire/json] Rule must be an object")
 	}
-	if err := validateRuleShape(rule); err != nil {
+	if err := validateRuleShape(rule, fields); err != nil {
 		return err
 	}
 
@@ -440,7 +440,7 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 		for _, branchName := range branches.Keys() {
 			branchRules, _ := branches.val(branchName).([]any)
 			for _, inner := range branchRules {
-				if err := validateRule(inner, fieldNames, conditions); err != nil {
+				if err := validateRule(inner, fieldNames, fields, conditions); err != nil {
 					return err
 				}
 			}
@@ -451,7 +451,7 @@ func validateRule(raw any, fieldNames map[string]bool, conditions map[string]Con
 		rawRules, _ := rule.get("rules")
 		rules, _ := rawRules.([]any)
 		for _, inner := range rules {
-			if err := validateRule(inner, fieldNames, conditions); err != nil {
+			if err := validateRule(inner, fieldNames, fields, conditions); err != nil {
 				return err
 			}
 		}
@@ -546,20 +546,19 @@ func validateSchemaObject(root *object) error {
 	}
 
 	fieldNames := map[string]bool{}
-	for _, name := range fieldsObj.Keys() {
-		fieldNames[name] = true
-	}
-
+	fields := map[string]FieldDef{}
 	for _, name := range fieldsObj.Keys() {
 		if err := validateFieldDef(name, fieldsObj.val(name)); err != nil {
 			return err
 		}
+		fieldNames[name] = true
+		fields[name] = fieldDefFromObject(objOrEmpty(fieldsObj.val(name)))
 	}
 
 	if rawRules, exists := root.get("rules"); exists {
 		rules, _ := rawRules.([]any)
 		for _, rule := range rules {
-			if err := validateRule(rule, fieldNames, conditions); err != nil {
+			if err := validateRule(rule, fieldNames, fields, conditions); err != nil {
 				return err
 			}
 		}

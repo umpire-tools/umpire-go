@@ -260,6 +260,22 @@ func compileFieldPredicate(obj *object, op string, fieldNames map[string]bool) (
 			},
 			checkField: field,
 		}, nil
+	case "contains":
+		field, _ := obj.string("field")
+		if err := assertExprField(field, op, fieldNames); err != nil {
+			return nil, err
+		}
+		value, _ := obj.get("value")
+		return &compiledExpr{
+			pred: func(values, _ map[string]any) (bool, error) {
+				items, ok := values[field].([]any)
+				if !ok {
+					return false, nil
+				}
+				return jsonContains(items, value), nil
+			},
+			checkField: field,
+		}, nil
 	default:
 		return nil, nil
 	}
